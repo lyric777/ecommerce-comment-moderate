@@ -1,9 +1,9 @@
 // textWorker.ts
-import { ChatOpenAI } from "@langchain/openai"; 
 import { z } from "zod";
 import { ReviewGraphState } from "../state.js";
+import { createLLM } from "../../utils/llmFactory.js";
 
-const llm = new ChatOpenAI({ modelName: "gpt-4o-mini", temperature: 0 });
+const llm = createLLM("kimi-k2-0711-preview");
 
 export const textWorkerNode = async (state: typeof ReviewGraphState.State) => {
     console.log("Text Worker: analyzing text, context, and drafting responses if needed...");
@@ -23,7 +23,9 @@ export const textWorkerNode = async (state: typeof ReviewGraphState.State) => {
         reasoning: z.string().describe("Detailed explanation of the analysis.")
     });
 
-    const structuredLlm = llm.withStructuredOutput(textAnalysisSchema);
+    const structuredLlm = llm.withStructuredOutput(textAnalysisSchema, {
+        method: "functionCalling",     
+    });
 
     // 2. Updated Prompt
     const prompt = `

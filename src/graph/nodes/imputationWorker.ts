@@ -1,8 +1,8 @@
-import { ChatOpenAI } from "@langchain/openai"; 
 import { z } from "zod";
 import { ReviewGraphState } from "../state.js";
+import { createLLM } from "../../utils/llmFactory.js";
 
-const llm = new ChatOpenAI({ modelName: "gpt-4o-mini", temperature: 0 });
+const llm = createLLM("kimi-k2-0711-preview");
 
 export const imputationWorkerNode = async (state: typeof ReviewGraphState.State) => {
     console.log("Imputation Worker: inferring missing score...");
@@ -13,7 +13,9 @@ export const imputationWorkerNode = async (state: typeof ReviewGraphState.State)
         reasoning: z.string().describe("Explanation of how the score was deduced from the text sentiment.")
     });
 
-    const structuredImputationLlm = llm.withStructuredOutput(imputationSchema);
+    const structuredImputationLlm = llm.withStructuredOutput(imputationSchema, {
+        method: "functionCalling",     
+    });
 
     const prompt = `
 You are a customer sentiment analysis expert. 

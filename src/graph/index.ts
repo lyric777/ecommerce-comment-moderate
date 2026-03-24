@@ -3,33 +3,32 @@ import { ReviewGraphState } from "./state.js";
 import { textWorkerNode } from "./nodes/textWorker.js";
 import { visionWorkerNode } from "./nodes/visionWorker.js";
 import { imputationWorkerNode } from "./nodes/imputationWorker.js";
-//import { supervisorNode } from "./nodes/supervisor.js";
-//import { finalDecisionNode } from "./nodes/finalDecision.js";
+import { supervisorNode } from "./nodes/supervisor.js";
+import { finalDecisionNode } from "./nodes/finalDecision.js";
 
-// This is a highly simplified dummy node used only to demonstrate the skeleton
-const supervisorNode = async (state: typeof ReviewGraphState.State) => {
-    console.log("Supervisor: analyzing input...");
-    // In a real implementation this would call an LLM and choose which worker to run next
-    return { reasoningLogs: ["Supervisor initiated routing."] };
-};
-
-const finalDecisionNode = async (state: typeof ReviewGraphState.State) => {
-    console.log("Final Decision: aggregating all worker results...");
-    return { finalStatus: "approved" };
-};
-
+// Define the dynamic routing logic based on the Supervisor's triage
 const routeAfterSupervisor = (state: typeof ReviewGraphState.State): string[] => {
-    const payload = state.reviewPayload;
-    // Text worker is ALWAYS required
+    const { reviewPayload, autoFlag } = state;
+    
+    // 1. Short-circuit logic: Skip all workers if Supervisor flagged as spam or high risk
+    if (autoFlag === "supervisor_rejected") {
+        console.log("Routing: High risk or spam detected. Short-circuiting directly to final decision.");
+        return ["finalDecision"];
+    }
+    
+    // 2. Standard routing logic for legitimate reviews
     const nextNodes = ["textWorker"]; 
-    // Conditionally add other workers based on payload
-    if (payload?.imageUrl) {
+    
+    // Conditionally fan-out based on payload presence
+    if (reviewPayload?.imageUrl) {
         nextNodes.push("visionWorker");
     }
-    if (payload?.rating === undefined || payload?.rating === null) {
+    
+    if (reviewPayload?.rating === undefined || reviewPayload?.rating === null) {
         nextNodes.push("imputationWorker");
     }
-    console.log(`Supervisor routing to: [${nextNodes.join(", ")}]`);
+    
+    console.log(`Routing: Proceeding to workers: [${nextNodes.join(", ")}]`);
     return nextNodes;
 };
 
