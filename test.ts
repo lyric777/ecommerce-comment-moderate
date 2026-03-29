@@ -2,7 +2,6 @@ import "dotenv/config";
 import { reviewModerationGraph } from "./src/graph/index.js";
 
 async function runTests() {
-    /*
     console.log("======================================================");
     console.log("=== TEST 1: Spam / High Risk (Should Short-Circuit) ===");
     console.log("======================================================");
@@ -24,7 +23,7 @@ async function runTests() {
     console.log(JSON.stringify(result2, null, 2));
 
 
-    console.log("\n======================================================");*/
+    console.log("\n======================================================");
     console.log("=== TEST 3: Text + Image + No Rating (Should Fan-out) ===");
     console.log("======================================================");
     const result3 = await reviewModerationGraph.invoke({
