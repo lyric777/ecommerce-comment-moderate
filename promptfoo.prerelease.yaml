@@ -1,0 +1,22 @@
+description: Pre-release small-sample moderation gate
+prompts:
+  - prerelease-review-moderation-gate
+providers:
+  - 'exec:node --import tsx ./scripts/promptfoo/prereleaseRunner.ts'
+defaultTest:
+  assert:
+    - type: javascript
+      value: |
+        const result = JSON.parse(output);
+        return result.finalStatus === "{{expectedFinalStatus}}";
+    - type: javascript
+      value: |
+        const result = JSON.parse(output);
+        const expectedNeedle = "{{expectedAutoFlagContains}}";
+        const autoFlag = typeof result.autoFlag === 'string' ? result.autoFlag : '';
+        return !expectedNeedle || autoFlag.includes(expectedNeedle);
+    - type: javascript
+      value: |
+        const result = JSON.parse(output);
+        return Boolean(result.afterSalesDraft) === {{expectedHasAfterSalesDraft}};
+tests: file://./eval-datasets/prerelease-small-sample.json

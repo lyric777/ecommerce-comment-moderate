@@ -1,0 +1,55 @@
+name: Promptfoo Prerelease Gate
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    secrets:
+      LLM_API_KEY:
+        required: false
+      MOONSHOT_API_KEY:
+        required: false
+      MLFLOW_TRACKING_URI:
+        required: false
+      LLM_API_BASEURL:
+        required: false
+      LLM_MODEL:
+        required: false
+      LLM_VISION_MODEL:
+        required: false
+
+jobs:
+  promptfoo-prerelease:
+    runs-on: ubuntu-latest
+    env:
+      LLM_API_KEY: ${{ secrets.LLM_API_KEY || secrets.MOONSHOT_API_KEY }}
+      MOONSHOT_API_KEY: ${{ secrets.MOONSHOT_API_KEY }}
+      LLM_API_BASEURL: ${{ secrets.LLM_API_BASEURL }}
+      LLM_MODEL: ${{ secrets.LLM_MODEL }}
+      LLM_VISION_MODEL: ${{ secrets.LLM_VISION_MODEL }}
+      MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run prerelease promptfoo gate
+        run: npm run eval:promptfoo:prerelease
+
+      - name: Upload promptfoo artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: promptfoo-prerelease-results
+          path: |
+            .promptfoo/
+            promptfoo.prerelease.yaml
+            eval-datasets/prerelease-small-sample.json
+          if-no-files-found: warn

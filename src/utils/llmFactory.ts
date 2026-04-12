@@ -1,28 +1,75 @@
 import { ChatOpenAI } from "@langchain/openai";
 import "dotenv/config";
 
-/**
- * Factory function to create a configured ChatOpenAI instance for Moonshot API
- * @param modelName - The model identifier (e.g., "kimi-k2-0711-preview", "kimi-k2.5")
- * @param temperature - Optional temperature for randomness control (default: 0)
- * @returns Configured ChatOpenAI instance
- */
-export function createLLM(modelName: string, temperature: number = 0): ChatOpenAI {
-    const apiKey = process.env.MOONSHOT_API_KEY;    
+export interface CreateLLMOptions {
+    modelName?: string;
+    temperature?: number;
+    apiKey?: string;
+    baseURL?: string;
+}
+
+function resolveApiKey(explicitApiKey?: string): string {
+    const apiKey = explicitApiKey || process.env.LLM_API_KEY || process.env.OPENAI_API_KEY || process.env.MOONSHOT_API_KEY;
+
     if (!apiKey) {
         throw new Error(
-            "MOONSHOT_API_KEY environment variable is not set. " +
-            "Please ensure your .env file contains MOONSHOT_API_KEY."
+            "No LLM API key configured. Set LLM_API_KEY (preferred), OPENAI_API_KEY, or MOONSHOT_API_KEY in your environment."
         );
     }
+
+    return apiKey;
+}
+
+function resolveBaseURL(explicitBaseURL?: string, apiKeySource?: string): string | undefined {
+    if (explicitBaseURL) {
+        return explicitBaseURL;
+    }
+
+    if (process.env.LLM_API_BASEURL) {
+        return process.env.LLM_API_BASEURL;
+    }
+
+    // Backward compatibility for existing Moonshot-only setups.
+    if (!process.env.LLM_API_KEY && !process.env.OPENAI_API_KEY && (apiKeySource || process.env.MOONSHOT_API_KEY)) {
+        return "https://api.moonshot.cn/v1";
+    }
+
+    return undefined;
+}
+
+/**
+ * Factory function to create a configured ChatOpenAI-compatible client.
+ * Environment variables provide defaults and explicit options override them.
+ */
+export function createLLM(modelNameOrOptions?: string | CreateLLMOptions, temperature?: number): ChatOpenAI {
+    const options: CreateLLMOptions = typeof modelNameOrOptions === "string"
+        ? {
+            modelName: modelNameOrOptions,
+            ...(temperature !== undefined ? { temperature } : {})
+        }
+        : (modelNameOrOptions ?? {});
+
+    const modelName = options.modelName || process.env.LLM_MODEL || "kimi-k2-0711-preview";
+    const resolvedTemperature = options.temperature ?? Number(process.env.LLM_TEMPERATURE ?? "0");
+    const apiKey = resolveApiKey(options.apiKey);
+    const baseURL = resolveBaseURL(options.baseURL, options.apiKey);
+
+    const configuration = {
+        apiKey,
+        ...(baseURL ? { baseURL } : {}),
+    };
 
     return new ChatOpenAI({
         modelName,
         openAIApiKey: apiKey,
-        configuration: {
-            baseURL: "https://api.moonshot.cn/v1",
-            apiKey: apiKey
-        },
-        temperature
+        configuration,
+        temperature: resolvedTemperature
+    });
+}
+
+export function createLLMFromPromptConfig(modelConfig?: { model_name: string; temperature?: number }): ChatOpenAI {
+    return createLLM({
+        ...(modelConfig?.model_name ? { modelName: modelConfig.model_name } : {}),
+        ...(modelConfig?.temperature !== undefined ? { temperature: modelConfig.temperature } : {}),
     });
 }

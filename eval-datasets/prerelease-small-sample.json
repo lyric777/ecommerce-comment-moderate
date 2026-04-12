@@ -1,0 +1,50 @@
+[
+  {
+    "description": "Reject empty review content before release",
+    "vars": {
+      "reviewPayload": {
+        "content": "",
+        "stars": 5
+      },
+      "expectedFinalStatus": "rejected",
+      "expectedAutoFlagContains": "supervisor_rejected",
+      "expectedHasAfterSalesDraft": false
+    }
+  },
+  {
+    "description": "Hide off-topic review that is not about the product",
+    "vars": {
+      "reviewPayload": {
+        "content": "my kids loves eating it",
+        "stars": 5
+      },
+      "expectedFinalStatus": "hidden",
+      "expectedAutoFlagContains": "off_topic",
+      "expectedHasAfterSalesDraft": false
+    }
+  },
+  {
+    "description": "Hide mismatch review and require after-sales draft",
+    "vars": {
+      "reviewPayload": {
+        "content": "Terrible product, completely broken, waste of money. I want a refund.",
+        "stars": 5
+      },
+      "expectedFinalStatus": "hidden",
+      "expectedAutoFlagContains": "after_sales",
+      "expectedHasAfterSalesDraft": true
+    }
+  },
+  {
+    "description": "Approve a normal positive product review",
+    "vars": {
+      "reviewPayload": {
+        "content": "Great quality, very comfortable and worth the price.",
+        "stars": 5
+      },
+      "expectedFinalStatus": "approved",
+      "expectedAutoFlagContains": "",
+      "expectedHasAfterSalesDraft": false
+    }
+  }
+]

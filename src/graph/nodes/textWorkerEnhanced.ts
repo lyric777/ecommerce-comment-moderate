@@ -13,10 +13,11 @@
 
 import { z } from "zod";
 import { ReviewGraphState } from "../state.js";
-import { createLLM } from "../../utils/llmFactory.js";
+import { createLLMFromPromptConfig } from "../../utils/llmFactory.js";
 import { getProduct } from "../../mcp/tools.js";
+import { ENHANCED_TEXT_WORKER_PROMPT } from "../../prompts/catalog.js";
 
-const llm = createLLM("kimi-k2-0711-preview");
+const llm = createLLMFromPromptConfig(ENHANCED_TEXT_WORKER_PROMPT.modelConfig);
 
 export const textWorkerNode = async (state: typeof ReviewGraphState.State) => {
     console.log("Text Worker: Collecting evidence for review...");

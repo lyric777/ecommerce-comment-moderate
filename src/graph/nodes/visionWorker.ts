@@ -1,12 +1,12 @@
 // visionWorker.ts
 import { z } from "zod";
-import { createLLM } from "../../utils/llmFactory.js";
+import { createLLMFromPromptConfig } from "../../utils/llmFactory.js";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
 import { ReviewGraphState } from "../state.js";
 import axios from "axios";
 import { STANDARD_VISION_WORKER_PROMPT } from "../../prompts/catalog.js";
 
-const llm = createLLM("moonshot-v1-8k-vision-preview", 1);
+const llm = createLLMFromPromptConfig(STANDARD_VISION_WORKER_PROMPT.modelConfig);
 
 async function fetchImageToBase64(url: string): Promise<string> {
     try {

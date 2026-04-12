@@ -9,10 +9,11 @@
 import { z } from "zod";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { ReviewGraphState } from "../state.js";
-import { createLLM } from "../../utils/llmFactory.js";
+import { createLLMFromPromptConfig } from "../../utils/llmFactory.js";
 import { getUserReviews } from "../../mcp/tools.js";
+import { ENHANCED_SUPERVISOR_PROMPT } from "../../prompts/catalog.js";
 
-const llm = createLLM("kimi-k2-0711-preview");
+const llm = createLLMFromPromptConfig(ENHANCED_SUPERVISOR_PROMPT.modelConfig);
 
 export const supervisorNode = async (state: typeof ReviewGraphState.State) => {
     console.log("Supervisor: Conducting semantic triage with user history...");

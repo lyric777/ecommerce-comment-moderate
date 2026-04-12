@@ -1,11 +1,11 @@
 // textWorker.ts
 import { z } from "zod";
 import { ReviewGraphState } from "../state.js";
-import { createLLM } from "../../utils/llmFactory.js";
+import { createLLMFromPromptConfig } from "../../utils/llmFactory.js";
 import { getProductHttp } from "../../mcp/tools-http.js";
 import { STANDARD_TEXT_WORKER_PROMPT } from "../../prompts/catalog.js";
 
-const llm = createLLM("kimi-k2-0711-preview");
+const llm = createLLMFromPromptConfig(STANDARD_TEXT_WORKER_PROMPT.modelConfig);
 
 export const textWorkerNode = async (state: typeof ReviewGraphState.State) => {
     console.log("Text Worker: analyzing text, context, and drafting responses if needed...");

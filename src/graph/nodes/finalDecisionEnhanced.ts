@@ -9,10 +9,11 @@
 import { z } from "zod";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { ReviewGraphState } from "../state.js";
-import { createLLM } from "../../utils/llmFactory.js";
+import { createLLMFromPromptConfig } from "../../utils/llmFactory.js";
 import { updateReviewStatus } from "../../mcp/tools.js";
+import { ENHANCED_FINAL_DECISION_PROMPT } from "../../prompts/catalog.js";
 
-const llm = createLLM("kimi-k2-0711-preview");
+const llm = createLLMFromPromptConfig(ENHANCED_FINAL_DECISION_PROMPT.modelConfig);
 
 export const finalDecisionNode = async (state: typeof ReviewGraphState.State) => {
     console.log("Final Decision: Synthesizing worker reports and making final verdict...");

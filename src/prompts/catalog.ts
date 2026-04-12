@@ -1,3 +1,5 @@
+import "dotenv/config";
+
 export type PromptTemplate =
   | string
   | Array<{
@@ -17,8 +19,13 @@ export interface PromptDefinition {
 }
 
 const defaultModelConfig = {
-  model_name: "kimi-k2-0711-preview",
-  temperature: 0,
+  model_name: process.env.LLM_MODEL ?? "kimi-k2-0711-preview",
+  temperature: Number(process.env.LLM_TEMPERATURE ?? "0"),
+};
+
+const defaultVisionModelConfig = {
+  model_name: process.env.LLM_VISION_MODEL ?? process.env.LLM_MODEL ?? "moonshot-v1-8k-vision-preview",
+  temperature: Number(process.env.LLM_VISION_TEMPERATURE ?? "1"),
 };
 
 export const STANDARD_SUPERVISOR_PROMPT: PromptDefinition = {
@@ -93,10 +100,7 @@ Your JSON MUST EXACTLY match the following structure:
       content: "Please analyze this image and return the required JSON.",
     },
   ],
-  modelConfig: {
-    model_name: "moonshot-v1-8k-vision-preview",
-    temperature: 1,
-  },
+  modelConfig: defaultVisionModelConfig,
   commitMessage: "Initial version - vision moderation",
 };
 

@@ -8,7 +8,7 @@ import { ALL_PROMPT_DEFINITIONS, type PromptDefinition } from "../prompts/catalo
 
 const MLFLOW_BASE = (process.env.MLFLOW_TRACKING_URI ?? "").replace(/\/$/, "");
 const EXPERIMENT_NAME = "comment-moderate-traces";
-const DEFAULT_MODEL_NAME = "kimi-k2-0711-preview";
+const DEFAULT_MODEL_NAME = process.env.LLM_MODEL ?? "kimi-k2-0711-preview";
 const PROMPT_EXPERIMENT_IDS_TAG_KEY = "_mlflow_experiment_ids";
 const LINKED_PROMPTS_TAG_KEY = "mlflow.linkedPrompts";
 const PROMPT_ASSOCIATED_RUN_IDS_TAG_KEY = "mlflow.prompt.associatedRunIds";

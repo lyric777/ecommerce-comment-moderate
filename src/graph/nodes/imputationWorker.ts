@@ -1,9 +1,9 @@
 import { z } from "zod";
 import { ReviewGraphState } from "../state.js";
-import { createLLM } from "../../utils/llmFactory.js";
+import { createLLMFromPromptConfig } from "../../utils/llmFactory.js";
 import { STANDARD_IMPUTATION_WORKER_PROMPT } from "../../prompts/catalog.js";
 
-const llm = createLLM("kimi-k2-0711-preview");
+const llm = createLLMFromPromptConfig(STANDARD_IMPUTATION_WORKER_PROMPT.modelConfig);
 
 export const imputationWorkerNode = async (state: typeof ReviewGraphState.State) => {
     console.log("Imputation Worker: inferring missing score...");

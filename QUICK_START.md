@@ -7,7 +7,12 @@
 ### Create `.env` file in project root:
 ```bash
 # Required
-MOONSHOT_API_KEY=sk-your-api-key
+LLM_API_KEY=sk-your-api-key
+
+# Optional if you use a non-default OpenAI-compatible provider
+LLM_API_BASEURL=https://api.moonshot.cn/v1
+LLM_MODEL=kimi-k2-0711-preview
+LLM_VISION_MODEL=moonshot-v1-8k-vision-preview
 
 # MCP Server connection
 MCP_SERVER_COMMAND=python
@@ -194,6 +199,32 @@ npm run build  # if needed
 3. 🔧 Check `MIGRATION.md` for advanced setup
 4. 🧪 Run examples to verify everything works
 5. 🚀 Deploy to production
+
+## Pre-release Prompt Gate
+
+Use the small-sample promptfoo gate before deployment. It runs the full moderation graph against a fixed prerelease dataset and fails if any expected outcome regresses.
+
+### Local run
+```bash
+npm run eval:promptfoo:prerelease
+```
+
+### What it checks
+- Empty review content is rejected.
+- Off-topic content is hidden.
+- Refund or complaint content produces a hidden verdict plus an after-sales draft.
+- Normal positive feedback remains approved.
+
+### CI workflow
+The reusable workflow lives in `.github/workflows/promptfoo-prerelease.yml`.
+It expects `LLM_API_KEY` as the preferred secret name and optionally reads `MLFLOW_TRACKING_URI`.
+
+### Reusable workflow vs direct workflow
+The file `.github/workflows/promptfoo-prerelease.yml` already works in two modes:
+- Direct use: run it manually from the GitHub Actions UI via `workflow_dispatch`.
+- Reusable use: call it from another workflow via `workflow_call`.
+
+It is not automatically attached to your release pipeline yet. That is why I mentioned an upper-level caller workflow: if you want every release to be blocked by this gate, your release workflow needs to invoke this reusable workflow or include the same job inline.
 
 ## 🎓 Learn More
 
