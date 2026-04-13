@@ -1,7 +1,7 @@
 // textWorker.ts
 import { z } from "zod";
-import { ReviewGraphState } from "../state.js";
-import { createLLMFromPromptConfig } from "../../utils/llmFactory.js";
+import { ReviewGraphState, type SpanRecord } from "../state.js";
+import { createLLMFromPromptConfig, globalTokenTracker } from "../../utils/llmFactory.js";
 import { getProductHttp } from "../../mcp/tools-http.js";
 import { STANDARD_TEXT_WORKER_PROMPT } from "../../prompts/catalog.js";
 
@@ -76,8 +76,24 @@ export const textWorkerNode = async (state: typeof ReviewGraphState.State) => {
         .replace("{{rating}}", String(rating !== undefined ? rating : "None provided"))
         .replace("{{product_context}}", productContext);
 
-    // 3. Invoke LLM
+    // 3. Invoke LLM — capture span
+    const tokensBefore = { input: globalTokenTracker.inputTokens, output: globalTokenTracker.outputTokens };
+    const spanStart = Date.now();
     const result = await structuredLlm.invoke(prompt);
+    const spanEnd = Date.now();
+
+    const spanRecord: SpanRecord = {
+        name: "textWorker",
+        spanType: "LLM",
+        startTimeMs: spanStart,
+        endTimeMs: spanEnd,
+        inputs: JSON.stringify({ prompt }),
+        outputs: JSON.stringify(result),
+        inputTokens: globalTokenTracker.inputTokens - tokensBefore.input,
+        outputTokens: globalTokenTracker.outputTokens - tokensBefore.output,
+        model: STANDARD_TEXT_WORKER_PROMPT.modelConfig?.model_name,
+        statusCode: "OK",
+    };
 
     // 4. Construct the afterSalesDraft object if applicable
     const draft = result.requiresAfterSales 
@@ -96,6 +112,7 @@ export const textWorkerNode = async (state: typeof ReviewGraphState.State) => {
         isSafe: result.isSafe,
         isMismatch: result.isMismatch,
         requiresAfterSales: result.requiresAfterSales,
-        afterSalesDraft: draft
+        afterSalesDraft: draft,
+        spanRecords: [spanRecord],
     };
 };

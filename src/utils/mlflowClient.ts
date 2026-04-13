@@ -8,6 +8,7 @@ import "dotenv/config";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
 import { ChatOpenAI } from "@langchain/openai";
 import { ALL_PROMPT_DEFINITIONS, type PromptDefinition } from "../prompts/catalog.js";
+import type { SpanRecord } from "../graph/state.js";
 
 const s3 = new S3Client({ region: process.env.AWS_DEFAULT_REGION ?? "ap-southeast-1" });
 const S3_BUCKET = "ceramicraft-mlflow";
@@ -205,6 +206,7 @@ export interface ModerationTraceData {
   inputTokens?: number | undefined;
   outputTokens?: number | undefined;
   totalTokens?: number | undefined;
+  spanRecords?: SpanRecord[] | undefined;
 }
 
 async function generateThinkingSummary(
@@ -250,10 +252,26 @@ export async function logModerationTrace(data: ModerationTraceData): Promise<voi
     const startTime = data.startTimeMs ?? Date.now() - (data.latencyMs ?? 0);
     const executionTime = data.latencyMs ?? 0;
 
+    // Generate thinking summary and capture as a span
+    const allSpans = [...(data.spanRecords ?? [])];
+    const thinkingStart = Date.now();
     const thinkingSummary = await generateThinkingSummary(
       data.reasoningLogs ?? [],
       data.finalStatus
     );
+    const thinkingEnd = Date.now();
+    if (thinkingSummary) {
+      allSpans.push({
+        name: "thinkingSummary",
+        spanType: "LLM",
+        startTimeMs: thinkingStart,
+        endTimeMs: thinkingEnd,
+        inputs: JSON.stringify({ reasoningLogs: data.reasoningLogs, finalStatus: data.finalStatus }),
+        outputs: JSON.stringify({ summary: thinkingSummary }),
+        model: process.env.LLM_MODEL ?? DEFAULT_MODEL_NAME,
+        statusCode: "OK",
+      });
+    }
 
     const request = JSON.stringify({
       review_id: data.reviewId,
@@ -317,18 +335,12 @@ export async function logModerationTrace(data: ModerationTraceData): Promise<voi
       await linkPromptsToTrace(traceId, data.linkedPrompts);
     }
 
-    // Upload span artifacts to S3
-    const spanAttrs: Record<string, string> = {};
-    if (data.inputTokens !== undefined) spanAttrs["llm_input_tokens"] = String(data.inputTokens);
-    if (data.outputTokens !== undefined) spanAttrs["llm_output_tokens"] = String(data.outputTokens);
-    if (data.totalTokens !== undefined) {
-      spanAttrs["llm_total_tokens"] = String(data.totalTokens);
-      spanAttrs["llm_duration_ms"] = String(executionTime);
-    }
-    if (models.length > 0 && models[0]) spanAttrs["llm_model"] = models[0];
-    if (thinkingSummary) spanAttrs["thinking_process"] = thinkingSummary;
+    // Upload multi-span artifacts to S3
     try {
-      await uploadTraceSpans(traceId, experimentId, request, response, startTime, executionTime, spanAttrs);
+      await uploadTraceSpans(traceId, experimentId, request, response, startTime, executionTime, allSpans, {
+        thinking_process: thinkingSummary || undefined,
+        llm_model: models[0] || undefined,
+      });
     } catch (e: any) {
       console.warn("[MLflow] Failed to upload trace spans:", e.response?.status, e.message);
     }
@@ -352,41 +364,69 @@ async function uploadTraceSpans(
   response: string,
   startTimeMs: number,
   executionTimeMs: number,
-  extraAttributes: Record<string, string>
+  childSpanRecords: SpanRecord[],
+  rootExtra: { thinking_process?: string | undefined; llm_model?: string | undefined },
 ): Promise<void> {
-  // nanoseconds — JS loses ~3 digits of precision at this scale, acceptable for display
+  const traceIdHex = traceId.replace(/-/g, "");
   const startTimeNs = startTimeMs * 1_000_000;
   const endTimeNs = (startTimeMs + Math.max(0, executionTimeMs)) * 1_000_000;
 
-  const attributes: Record<string, string> = {
+  // Root span — CHAIN type, encompasses the full workflow
+  const rootSpanId = generateHexId(16);
+  const rootAttributes: Record<string, string> = {
     "mlflow.spanType": "CHAIN",
     "mlflow.traceRequestId": traceId,
     "mlflow.spanInputs": request,
     "mlflow.spanOutputs": response,
-    ...extraAttributes,
   };
+  if (rootExtra.thinking_process) rootAttributes["thinking_process"] = rootExtra.thinking_process;
+  if (rootExtra.llm_model) rootAttributes["llm_model"] = rootExtra.llm_model;
 
-  const body = JSON.stringify({
-    spans: [
-      {
-        name: "comment-moderation",
-        context: {
-          span_id: generateHexId(16),
-          trace_id: traceId.replace(/-/g, ""),
-        },
-        parent_id: null,
-        start_time: startTimeNs,
-        end_time: endTimeNs,
-        status_code: "OK",
-        status_message: "",
-        attributes,
-        events: [],
-      },
-    ],
-  });
+  const spans: any[] = [
+    {
+      name: "comment-moderation",
+      context: { span_id: rootSpanId, trace_id: traceIdHex },
+      parent_id: null,
+      start_time: startTimeNs,
+      end_time: endTimeNs,
+      status_code: "OK",
+      status_message: "",
+      attributes: rootAttributes,
+      events: [],
+    },
+  ];
 
-  // Upload traces.json directly to S3 at the path matching mlflow.artifactLocation:
-  // s3://ceramicraft-mlflow/{experimentId}/traces/{traceId}/artifacts/traces.json
+  // Child spans — one per LLM call recorded by graph nodes
+  for (const rec of childSpanRecords) {
+    const childSpanId = generateHexId(16);
+    const childAttrs: Record<string, string> = {
+      "mlflow.spanType": rec.spanType,
+      "mlflow.traceRequestId": traceId,
+      "mlflow.spanInputs": rec.inputs,
+      "mlflow.spanOutputs": rec.outputs,
+    };
+    if (rec.inputTokens !== undefined) childAttrs["llm_input_tokens"] = String(rec.inputTokens);
+    if (rec.outputTokens !== undefined) childAttrs["llm_output_tokens"] = String(rec.outputTokens);
+    if (rec.inputTokens !== undefined && rec.outputTokens !== undefined) {
+      childAttrs["llm_total_tokens"] = String(rec.inputTokens + rec.outputTokens);
+    }
+    if (rec.model) childAttrs["llm_model"] = rec.model;
+
+    spans.push({
+      name: rec.name,
+      context: { span_id: childSpanId, trace_id: traceIdHex },
+      parent_id: rootSpanId,
+      start_time: rec.startTimeMs * 1_000_000,
+      end_time: rec.endTimeMs * 1_000_000,
+      status_code: rec.statusCode ?? "OK",
+      status_message: "",
+      attributes: childAttrs,
+      events: [],
+    });
+  }
+
+  const body = JSON.stringify({ spans });
+
   await s3.send(new PutObjectCommand({
     Bucket: S3_BUCKET,
     Key: `${experimentId}/traces/${traceId}/artifacts/traces.json`,

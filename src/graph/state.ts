@@ -1,5 +1,19 @@
 import { Annotation } from "@langchain/langgraph";
 
+/** A single LLM call record — one per invoke(), collected by each graph node. */
+export interface SpanRecord {
+  name: string;
+  spanType: "CHAIN" | "LLM" | "TOOL";
+  startTimeMs: number;
+  endTimeMs: number;
+  inputs: string;   // JSON string
+  outputs: string;  // JSON string
+  inputTokens?: number | undefined;
+  outputTokens?: number | undefined;
+  model?: string | undefined;
+  statusCode?: "OK" | "ERROR" | undefined;
+}
+
 // Defines the shared data structure used through the Graph
 export const ReviewGraphState = Annotation.Root({
   // 1. Input data (provided by the host/driver process)
@@ -69,4 +83,10 @@ export const ReviewGraphState = Annotation.Root({
   finalStatus: Annotation<"approved" | "hidden" | "rejected">(),
   autoFlag: Annotation<string | null>(),
   isHarmful: Annotation<boolean | undefined>(),      // Computed during final decision
+
+  // 7. Per-LLM-call span records (appended by each node)
+  spanRecords: Annotation<SpanRecord[]>({
+    reducer: (curr, update) => curr.concat(update),
+    default: () => [],
+  }),
 });

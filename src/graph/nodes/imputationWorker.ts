@@ -1,6 +1,6 @@
 import { z } from "zod";
-import { ReviewGraphState } from "../state.js";
-import { createLLMFromPromptConfig } from "../../utils/llmFactory.js";
+import { ReviewGraphState, type SpanRecord } from "../state.js";
+import { createLLMFromPromptConfig, globalTokenTracker } from "../../utils/llmFactory.js";
 import { STANDARD_IMPUTATION_WORKER_PROMPT } from "../../prompts/catalog.js";
 
 const llm = createLLMFromPromptConfig(STANDARD_IMPUTATION_WORKER_PROMPT.modelConfig);
@@ -20,11 +20,28 @@ export const imputationWorkerNode = async (state: typeof ReviewGraphState.State)
 
     const prompt = String(STANDARD_IMPUTATION_WORKER_PROMPT.template).replace("{{text}}", text ?? "");
 
+    const tokensBefore = { input: globalTokenTracker.inputTokens, output: globalTokenTracker.outputTokens };
+    const spanStart = Date.now();
     const result = await structuredImputationLlm.invoke(prompt);
+    const spanEnd = Date.now();
+
+    const spanRecord: SpanRecord = {
+        name: "imputationWorker",
+        spanType: "LLM",
+        startTimeMs: spanStart,
+        endTimeMs: spanEnd,
+        inputs: JSON.stringify({ prompt }),
+        outputs: JSON.stringify(result),
+        inputTokens: globalTokenTracker.inputTokens - tokensBefore.input,
+        outputTokens: globalTokenTracker.outputTokens - tokensBefore.output,
+        model: STANDARD_IMPUTATION_WORKER_PROMPT.modelConfig?.model_name,
+        statusCode: "OK",
+    };
 
     return { 
         reasoningLogs: [`[Imputation Worker] Inferred Score: ${result.inferredScore}. Reason: ${result.reasoning}`],
         executedPrompts: [{ name: STANDARD_IMPUTATION_WORKER_PROMPT.name }],
-        inferredScore: result.inferredScore
+        inferredScore: result.inferredScore,
+        spanRecords: [spanRecord],
     };
 };

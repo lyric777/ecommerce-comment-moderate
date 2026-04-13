@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
-import { ReviewGraphState } from "../state.js";
+import { ReviewGraphState, type SpanRecord } from "../state.js";
 import { createLLMFromPromptConfig } from "../../utils/llmFactory.js";
 import { globalTokenTracker } from "../../utils/llmFactory.js";
 import { STANDARD_SUPERVISOR_PROMPT } from "../../prompts/catalog.js";
@@ -39,15 +39,34 @@ export const supervisorNode = async (state: typeof ReviewGraphState.State) => {
     const messages = (STANDARD_SUPERVISOR_PROMPT.template as Array<{ role: "system" | "user"; content: string }>)
         .map(m => ({ ...m, content: m.content.replace("{{text}}", text) }));
 
-    // 3. 组装并调用大模型
+    // 3. 组装并调用大模型 — capture span
+    const inputText = messages.map(m => `[${m.role}] ${m.content}`).join("\n");
+    const tokensBefore = { input: globalTokenTracker.inputTokens, output: globalTokenTracker.outputTokens };
+    const spanStart = Date.now();
+
     const formattedPrompt = ChatPromptTemplate.fromMessages(messages);
     const triageResult = await structuredLlm.invoke(await formattedPrompt.invoke({}));
+
+    const spanEnd = Date.now();
+    const spanRecord: SpanRecord = {
+        name: "supervisor",
+        spanType: "LLM",
+        startTimeMs: spanStart,
+        endTimeMs: spanEnd,
+        inputs: JSON.stringify({ prompt: inputText }),
+        outputs: JSON.stringify(triageResult),
+        inputTokens: globalTokenTracker.inputTokens - tokensBefore.input,
+        outputTokens: globalTokenTracker.outputTokens - tokensBefore.output,
+        model: STANDARD_SUPERVISOR_PROMPT.modelConfig?.model_name,
+        statusCode: "OK",
+    };
 
     // 4. 将分诊结果写入 State，供图的条件路由 (Conditional Edge) 读取
     return {
         reasoningLogs: [`[Supervisor Triage] Category: ${triageResult.category}. Action: ${triageResult.action}. Reason: ${triageResult.reason}`],
         executedPrompts: [{ name: STANDARD_SUPERVISOR_PROMPT.name }],
         // 如果我们发现可以直接短路，就打个标记
-        autoFlag: triageResult.action === "short_circuit" ? "supervisor_rejected" : null
+        autoFlag: triageResult.action === "short_circuit" ? "supervisor_rejected" : null,
+        spanRecords: [spanRecord],
     };
 };

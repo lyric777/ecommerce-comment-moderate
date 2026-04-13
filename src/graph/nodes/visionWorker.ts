@@ -1,8 +1,8 @@
 // visionWorker.ts
 import { z } from "zod";
-import { createLLMFromPromptConfig } from "../../utils/llmFactory.js";
+import { createLLMFromPromptConfig, globalTokenTracker } from "../../utils/llmFactory.js";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
-import { ReviewGraphState } from "../state.js";
+import { ReviewGraphState, type SpanRecord } from "../state.js";
 import axios from "axios";
 import { STANDARD_VISION_WORKER_PROMPT } from "../../prompts/catalog.js";
 
@@ -61,6 +61,7 @@ export const visionWorkerNode = async (state: typeof ReviewGraphState.State) => 
     let allImagesSafe = true;
     let allImagesRelevant = true;
     const imageLogs: string[] = [];
+    const spanRecords: SpanRecord[] = [];
 
     for (let i = 0; i < imageUrls.length; i++) {
         const imageUrl = imageUrls[i]!; // Non-null assertion: we know it exists in the array
@@ -104,7 +105,24 @@ export const visionWorkerNode = async (state: typeof ReviewGraphState.State) => 
 
         // 5. Invoke the LLM for this image
         try {
+            const tokensBefore = { input: globalTokenTracker.inputTokens, output: globalTokenTracker.outputTokens };
+            const spanStart = Date.now();
             const result = await structuredVisionLlm.invoke(messages);
+            const spanEnd = Date.now();
+
+            spanRecords.push({
+                name: `visionWorker-image-${i + 1}`,
+                spanType: "LLM",
+                startTimeMs: spanStart,
+                endTimeMs: spanEnd,
+                inputs: JSON.stringify({ systemPrompt, userPrompt, imageIndex: i + 1 }),
+                outputs: JSON.stringify(result),
+                inputTokens: globalTokenTracker.inputTokens - tokensBefore.input,
+                outputTokens: globalTokenTracker.outputTokens - tokensBefore.output,
+                model: STANDARD_VISION_WORKER_PROMPT.modelConfig?.model_name,
+                statusCode: "OK",
+            });
+
             imageLogs.push(`[Vision Worker] Image ${i + 1}: Safe=${result.isSafe}, Relevant=${result.isRelevant}. ${result.reasoning}`);
             
             // Update aggregate evidence: if ANY image is unsafe or irrelevant, flag it
@@ -120,6 +138,7 @@ export const visionWorkerNode = async (state: typeof ReviewGraphState.State) => 
         reasoningLogs: imageLogs,
         executedPrompts: [{ name: STANDARD_VISION_WORKER_PROMPT.name }],
         isImageSafe: allImagesSafe,
-        isImageRelevant: allImagesRelevant
+        isImageRelevant: allImagesRelevant,
+        spanRecords,
     };
 };

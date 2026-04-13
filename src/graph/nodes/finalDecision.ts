@@ -1,4 +1,4 @@
-import { ReviewGraphState } from "../state.js";
+import { ReviewGraphState, type SpanRecord } from "../state.js";
 import { updateReviewStatusHttp } from "../../mcp/tools-http.js";
 import {
     logModerationRun,
@@ -36,7 +36,10 @@ export const finalDecisionNode = async (state: typeof ReviewGraphState.State) =>
         graphStartTime,
 
         // Prompt lineage
-        executedPrompts
+        executedPrompts,
+
+        // Span records from workers
+        spanRecords,
     } = state;
     
     // Prepare stars parameter for backend (same as inferredScore)
@@ -192,6 +195,7 @@ export const finalDecisionNode = async (state: typeof ReviewGraphState.State) =>
         inputTokens:   globalTokenTracker.inputTokens,
         outputTokens:  globalTokenTracker.outputTokens,
         totalTokens:   globalTokenTracker.totalTokens,
+        spanRecords:   spanRecords ?? [],
     });
 
     return {
