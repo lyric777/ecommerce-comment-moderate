@@ -3,12 +3,18 @@
  */
 
 import axios from "axios";
+import crypto from "crypto";
 import "dotenv/config";
+import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import { ChatOpenAI } from "@langchain/openai";
 import { ALL_PROMPT_DEFINITIONS, type PromptDefinition } from "../prompts/catalog.js";
+
+const s3 = new S3Client({ region: process.env.AWS_DEFAULT_REGION ?? "ap-southeast-1" });
+const S3_BUCKET = "ceramicraft-mlflow";
 
 const MLFLOW_BASE = (process.env.MLFLOW_TRACKING_URI ?? "").replace(/\/$/, "");
 const EXPERIMENT_NAME = "comment-moderate-traces";
-const DEFAULT_MODEL_NAME = process.env.LLM_MODEL ?? "kimi-k2-0711-preview";
+const DEFAULT_MODEL_NAME = "kimi-k2-0711-preview";
 const PROMPT_EXPERIMENT_IDS_TAG_KEY = "_mlflow_experiment_ids";
 const LINKED_PROMPTS_TAG_KEY = "mlflow.linkedPrompts";
 const PROMPT_ASSOCIATED_RUN_IDS_TAG_KEY = "mlflow.prompt.associatedRunIds";
@@ -196,6 +202,44 @@ export interface ModerationTraceData {
   reasoningLogs?: string[] | undefined;
   startTimeMs?: number | undefined;
   latencyMs?: number | undefined;
+  inputTokens?: number | undefined;
+  outputTokens?: number | undefined;
+  totalTokens?: number | undefined;
+}
+
+async function generateThinkingSummary(
+  reasoningLogs: string[],
+  finalStatus: string | undefined
+): Promise<string> {
+  if (!reasoningLogs || reasoningLogs.length === 0) return "";
+  try {
+    const llm = new ChatOpenAI({
+      modelName: process.env.LLM_MODEL ?? DEFAULT_MODEL_NAME,
+      openAIApiKey: process.env.LLM_API_KEY!,
+      configuration: {
+        apiKey: process.env.LLM_API_KEY!,
+        baseURL: process.env.LLM_API_BASEURL,
+      },
+      temperature: 0.3,
+      maxTokens: 200,
+      callbacks: [], // no globalTokenTracker — avoids polluting token counts for the review
+    });
+    const logsText = reasoningLogs.join("\n");
+    const resp = await llm.invoke([
+      {
+        role: "system",
+        content:
+          "You are a concise audit log summarizer. Write 2-3 sentences in English summarizing the AI agent's moderation reasoning.",
+      },
+      {
+        role: "user",
+        content: `The agent analyzed a product review and reached a final decision of "${finalStatus ?? "unknown"}". Here are its reasoning steps:\n\n${logsText}\n\nSummarize in 2-3 sentences what the agent found and why it reached this decision.`,
+      },
+    ]);
+    return typeof resp.content === "string" ? resp.content.trim() : reasoningLogs.join(" | ");
+  } catch {
+    return reasoningLogs.join(" | ");
+  }
 }
 
 export async function logModerationTrace(data: ModerationTraceData): Promise<void> {
@@ -205,6 +249,12 @@ export async function logModerationTrace(data: ModerationTraceData): Promise<voi
     const experimentId = await resolveExperimentId();
     const startTime = data.startTimeMs ?? Date.now() - (data.latencyMs ?? 0);
     const executionTime = data.latencyMs ?? 0;
+
+    const thinkingSummary = await generateThinkingSummary(
+      data.reasoningLogs ?? [],
+      data.finalStatus
+    );
+
     const request = JSON.stringify({
       review_id: data.reviewId,
       content: data.reviewContent,
@@ -216,41 +266,133 @@ export async function logModerationTrace(data: ModerationTraceData): Promise<voi
       is_harmful: data.isHarmful ?? false,
     });
 
-    const res = await axios.post(`${MLFLOW_BASE}/api/2.0/mlflow/traces`, {
-      experiment_id: experimentId,
-      timestamp_ms: startTime,
-      execution_time_ms: executionTime,
-      status: "OK",
-      request,
-      response,
-      request_metadata: [
-        { key: "mlflow.traceInputs", value: request },
-        { key: "mlflow.traceOutputs", value: response },
-      ],
-      tags: [
-        { key: "mlflow.source.name", value: "comment-moderate-langgraph" },
-        { key: "final_status", value: data.finalStatus ?? "" },
-        ...(data.autoFlag ? [{ key: "auto_flag", value: data.autoFlag }] : []),
-        ...(data.linkedPrompts && data.linkedPrompts.length > 0
-          ? [{ key: LINKED_PROMPTS_TAG_KEY, value: JSON.stringify(data.linkedPrompts) }]
-          : []),
-      ],
+    // --- V3 Trace API (flat dict tags + trace_metadata) ---
+    const traceId = "tr-" + crypto.randomBytes(16).toString("hex");
+    const models = getModelsUsedFromLinkedPrompts(data.linkedPrompts);
+
+    const traceMetadata: Record<string, string> = {
+      "mlflow.trace_schema.version": "3",
+      "mlflow.source.name": "comment-moderate-langgraph",
+      "mlflow.traceInputs": request,
+      "mlflow.traceOutputs": response,
+      "llm_duration_ms": String(executionTime),
+    };
+    if (data.inputTokens !== undefined) traceMetadata["llm_input_tokens"] = String(data.inputTokens);
+    if (data.outputTokens !== undefined) traceMetadata["llm_output_tokens"] = String(data.outputTokens);
+    if (data.totalTokens !== undefined) {
+      traceMetadata["mlflow.tokens"] = String(data.totalTokens);
+      traceMetadata["llm_total_tokens"] = String(data.totalTokens);
+    }
+    if (models.length > 0 && models[0]) traceMetadata["llm_model"] = models[0];
+    if (thinkingSummary) traceMetadata["thinking_process"] = thinkingSummary;
+    if (data.finalStatus) traceMetadata["final_status"] = data.finalStatus;
+    if (data.autoFlag) traceMetadata["auto_flag"] = data.autoFlag;
+
+    const traceTags: Record<string, string> = {
+      "mlflow.traceName": "comment-moderation",
+    };
+
+    const executionDuration = `${(executionTime / 1000).toFixed(3)}s`;
+
+    await axios.post(`${MLFLOW_BASE}/api/3.0/mlflow/traces`, {
+      trace: {
+        trace_info: {
+          trace_id: traceId,
+          trace_location: {
+            type: "MLFLOW_EXPERIMENT",
+            mlflow_experiment: { experiment_id: experimentId },
+          },
+          request_time: new Date(startTime).toISOString(),
+          execution_duration: executionDuration,
+          state: "OK",
+          trace_metadata: traceMetadata,
+          tags: traceTags,
+          request_preview: request.substring(0, 1000),
+          response_preview: response.substring(0, 1000),
+        },
+      },
     });
 
-    const traceId: string = res.data?.trace_info?.request_id ?? "unknown";
-
-    if (traceId !== "unknown") {
-      await finalizeTrace(traceId, startTime, executionTime);
+    if (data.linkedPrompts && data.linkedPrompts.length > 0) {
+      await linkPromptsToTrace(traceId, data.linkedPrompts);
     }
 
-    if (traceId !== "unknown" && data.linkedPrompts && data.linkedPrompts.length > 0) {
-      await linkPromptsToTrace(traceId, data.linkedPrompts);
+    // Upload span artifacts to S3
+    const spanAttrs: Record<string, string> = {};
+    if (data.inputTokens !== undefined) spanAttrs["llm_input_tokens"] = String(data.inputTokens);
+    if (data.outputTokens !== undefined) spanAttrs["llm_output_tokens"] = String(data.outputTokens);
+    if (data.totalTokens !== undefined) {
+      spanAttrs["llm_total_tokens"] = String(data.totalTokens);
+      spanAttrs["llm_duration_ms"] = String(executionTime);
+    }
+    if (models.length > 0 && models[0]) spanAttrs["llm_model"] = models[0];
+    if (thinkingSummary) spanAttrs["thinking_process"] = thinkingSummary;
+    try {
+      await uploadTraceSpans(traceId, experimentId, request, response, startTime, executionTime, spanAttrs);
+    } catch (e: any) {
+      console.warn("[MLflow] Failed to upload trace spans:", e.response?.status, e.message);
     }
 
     console.log(`[MLflow] Trace logged (trace_id=${traceId})`);
   } catch (error: any) {
     console.warn(`[MLflow] Failed to log trace: ${error.message}`);
   }
+}
+
+function generateHexId(length: number): string {
+  return Array.from({ length: Math.ceil(length / 2) }, () =>
+    Math.floor(Math.random() * 256).toString(16).padStart(2, "0")
+  ).join("").slice(0, length);
+}
+
+async function uploadTraceSpans(
+  traceId: string,
+  experimentId: string,
+  request: string,
+  response: string,
+  startTimeMs: number,
+  executionTimeMs: number,
+  extraAttributes: Record<string, string>
+): Promise<void> {
+  // nanoseconds — JS loses ~3 digits of precision at this scale, acceptable for display
+  const startTimeNs = startTimeMs * 1_000_000;
+  const endTimeNs = (startTimeMs + Math.max(0, executionTimeMs)) * 1_000_000;
+
+  const attributes: Record<string, string> = {
+    "mlflow.spanType": "CHAIN",
+    "mlflow.traceRequestId": traceId,
+    "mlflow.spanInputs": request,
+    "mlflow.spanOutputs": response,
+    ...extraAttributes,
+  };
+
+  const body = JSON.stringify({
+    spans: [
+      {
+        name: "comment-moderation",
+        context: {
+          span_id: generateHexId(16),
+          trace_id: traceId.replace(/-/g, ""),
+        },
+        parent_id: null,
+        start_time: startTimeNs,
+        end_time: endTimeNs,
+        status_code: "OK",
+        status_message: "",
+        attributes,
+        events: [],
+      },
+    ],
+  });
+
+  // Upload traces.json directly to S3 at the path matching mlflow.artifactLocation:
+  // s3://ceramicraft-mlflow/{experimentId}/traces/{traceId}/artifacts/traces.json
+  await s3.send(new PutObjectCommand({
+    Bucket: S3_BUCKET,
+    Key: `${experimentId}/traces/${traceId}/artifacts/traces.json`,
+    Body: body,
+    ContentType: "application/json",
+  }));
 }
 
 async function finalizeTrace(traceId: string, startTimeMs: number, executionTimeMs: number): Promise<void> {

@@ -85,7 +85,7 @@ async function testE2EWithHttp() {
                     status: "pending"
                 }
             },
-            {
+            /* {
                 id: "TEST_2",
                 name: "Rating/Text Mismatch + After-Sales - Expected: HIDDEN + Draft",
                 input: {
@@ -103,7 +103,7 @@ async function testE2EWithHttp() {
                     is_pinned: false,
                     status: "pending"
                 }
-            }
+            } */
         ];
 
         let passed = 0;

@@ -2,11 +2,14 @@ import { z } from "zod";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { ReviewGraphState } from "../state.js";
 import { createLLMFromPromptConfig } from "../../utils/llmFactory.js";
+import { globalTokenTracker } from "../../utils/llmFactory.js";
 import { STANDARD_SUPERVISOR_PROMPT } from "../../prompts/catalog.js";
 
 const llm = createLLMFromPromptConfig(STANDARD_SUPERVISOR_PROMPT.modelConfig);
 
 export const supervisorNode = async (state: typeof ReviewGraphState.State) => {
+    // Reset token tracker at the start of every new graph execution (supervisor is always first).
+    globalTokenTracker.reset();
     console.log("Supervisor: Conducting semantic triage and routing...");
     
     // Support both field name conventions (content from real API, text from test)
@@ -32,14 +35,13 @@ export const supervisorNode = async (state: typeof ReviewGraphState.State) => {
         method: "functionCalling",     
     });
 
-    // 2. 严格拆分 System Prompt 和 User Prompt
-    const promptTemplate = ChatPromptTemplate.fromMessages(
-        STANDARD_SUPERVISOR_PROMPT.template as Array<{ role: "system" | "user" | "assistant"; content: string }>
-    );
+    // 2. 手动替换模板变量（与 textWorker / imputationWorker 保持一致）
+    const messages = (STANDARD_SUPERVISOR_PROMPT.template as Array<{ role: "system" | "user"; content: string }>)
+        .map(m => ({ ...m, content: m.content.replace("{{text}}", text) }));
 
     // 3. 组装并调用大模型
-    const formattedPrompt = await promptTemplate.invoke({ text: text });
-    const triageResult = await structuredLlm.invoke(formattedPrompt);
+    const formattedPrompt = ChatPromptTemplate.fromMessages(messages);
+    const triageResult = await structuredLlm.invoke(await formattedPrompt.invoke({}));
 
     // 4. 将分诊结果写入 State，供图的条件路由 (Conditional Edge) 读取
     return {

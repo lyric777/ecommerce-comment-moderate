@@ -7,6 +7,7 @@ import {
     registerSystemPrompts,
     resolvePromptVersionRefs,
 } from "../../utils/mlflowClient.js";
+import { globalTokenTracker } from "../../utils/llmFactory.js";
 
 export const finalDecisionNode = async (state: typeof ReviewGraphState.State) => {
     console.log("Final Decision: Analyzing all evidence and making final verdict...");
@@ -188,6 +189,9 @@ export const finalDecisionNode = async (state: typeof ReviewGraphState.State) =>
         reasoningLogs: logs,
         startTimeMs:   graphStartTime,
         latencyMs:     Date.now() - graphStartTime,
+        inputTokens:   globalTokenTracker.inputTokens,
+        outputTokens:  globalTokenTracker.outputTokens,
+        totalTokens:   globalTokenTracker.totalTokens,
     });
 
     return {

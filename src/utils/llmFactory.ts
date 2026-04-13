@@ -1,5 +1,33 @@
 import { ChatOpenAI } from "@langchain/openai";
+import { BaseCallbackHandler } from "@langchain/core/callbacks/base";
+import type { LLMResult } from "@langchain/core/outputs";
 import "dotenv/config";
+
+class TokenTracker extends BaseCallbackHandler {
+    name = "TokenTracker";
+    inputTokens = 0;
+    outputTokens = 0;
+
+    reset(): void {
+        this.inputTokens = 0;
+        this.outputTokens = 0;
+    }
+
+    get totalTokens(): number {
+        return this.inputTokens + this.outputTokens;
+    }
+
+    async handleLLMEnd(output: LLMResult): Promise<void> {
+        const usage = (output.llmOutput as any)?.tokenUsage ?? (output.llmOutput as any)?.usage;
+        if (usage) {
+            this.inputTokens += usage.promptTokens ?? usage.prompt_tokens ?? usage.input_tokens ?? 0;
+            this.outputTokens += usage.completionTokens ?? usage.completion_tokens ?? usage.output_tokens ?? 0;
+        }
+    }
+}
+
+/** Singleton — accumulates token usage across all LLM calls in the current graph run. */
+export const globalTokenTracker = new TokenTracker();
 
 export interface CreateLLMOptions {
     modelName?: string;
@@ -63,7 +91,8 @@ export function createLLM(modelNameOrOptions?: string | CreateLLMOptions, temper
         modelName,
         openAIApiKey: apiKey,
         configuration,
-        temperature: resolvedTemperature
+        temperature: resolvedTemperature,
+        callbacks: [globalTokenTracker],
     });
 }
 
