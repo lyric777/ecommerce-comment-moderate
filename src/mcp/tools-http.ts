@@ -77,3 +77,13 @@ export async function getUserReviewsHttp(
         offset
     });
 }
+
+/**
+ * Get all non-rejected reviews by a specific user ID (no auth required)
+ * @param userId - The user ID to look up
+ */
+export async function listReviewsByUserIdHttp(userId: number): Promise<any> {
+    return callRemoteToolHttp("list_reviews_by_user_id", {
+        user_id: userId
+    });
+}

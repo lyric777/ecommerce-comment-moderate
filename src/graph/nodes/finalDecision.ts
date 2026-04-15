@@ -63,18 +63,24 @@ export const finalDecisionNode = async (state: typeof ReviewGraphState.State) =>
         finalStatus = "rejected";
         summaryReason = "Review contains unsafe or inappropriate content";
     }
-    // Rule 3: REJECT if any image is unsafe
-    else if (isImageSafe === false) {
-        finalStatus = "rejected";
-        summaryReason = "Review images contain unsafe or inappropriate content";
-    }
-    // Rule 4: HIDDEN if review is not about the product (quality issue, not safety)
+    // Rule 3: HIDDEN if review is not about the product (quality issue, not safety)
     else if (isProductRelevant === false) {
         finalStatus = "hidden";
         summaryReason = "Review is not about the product - flagged for manual review";
     }
-    // Rule 5: HIDDEN if rating/text mismatch (quality issue)
-    else if (isMismatch === true) {
+    // Rule 4: HIDDEN if images are not relevant to the product (quality issue, higher priority than image safety)
+    else if (isImageRelevant === false) {
+        finalStatus = "hidden";
+        summaryReason = "Review images are not relevant to the product - flagged for manual review";
+    }
+    // Rule 5: REJECT if any image is unsafe (only after relevance check)
+    else if (isImageSafe === false) {
+        finalStatus = "rejected";
+        summaryReason = "Review images contain unsafe or inappropriate content";
+    }
+    // Rule 6: HIDDEN if rating/text mismatch (quality issue)
+    // BUT: if original stars=0 (no rating provided) and we inferred a score, that's NOT a mismatch - it's successful imputation
+    else if (isMismatch === true && reviewPayload?.stars !== 0) {
         finalStatus = "hidden";
         summaryReason = "Review has rating/sentiment mismatch - flagged for manual review";
     }
@@ -89,21 +95,28 @@ export const finalDecisionNode = async (state: typeof ReviewGraphState.State) =>
     // Supervisor can set "supervisor_rejected", but we can also add other flags for quality issues
     let finalAutoFlag = autoFlag; // Keep supervisor's flag if present
     
-    // Add quality issue flags
+    // Build all applicable flags (independent of finalStatus decision)
     const flags: string[] = [];
     if (!autoFlag || autoFlag !== "supervisor_rejected") {
-        // Only add additional flags if not already rejected by supervisor
-        if (isMismatch === true) {
+        // Score imputation flag: if original stars = 0 (no rating) and we inferred a score
+        if (reviewPayload?.stars === 0 && inferredScore != null) {
+            flags.push("score_inferred");
+        }
+        // Other quality flags (can coexist with score_inferred)
+        if (isMismatch === true && reviewPayload?.stars !== 0) {
             flags.push("mismatch");
         }
         if (isProductRelevant === false) {
             flags.push("off_topic");
         }
+        if (isImageRelevant === false) {
+            flags.push("image_off_topic");
+        }
         if (requiresAfterSales === true) {
             flags.push("after_sales");
         }
         
-        // Combine flags if multiple issues found
+        // Combine all flags if multiple issues found
         if (flags.length > 0) {
             finalAutoFlag = flags.join("|");
         }
@@ -205,6 +218,7 @@ export const finalDecisionNode = async (state: typeof ReviewGraphState.State) =>
         // Include evidence fields for test visibility
         autoFlag: finalAutoFlag ?? undefined,
         isMismatch: isMismatch ?? undefined,
+        isImageRelevant: isImageRelevant ?? undefined,
         isHarmful: isHarmful,
         inferredScore: inferredScore ?? undefined
     };

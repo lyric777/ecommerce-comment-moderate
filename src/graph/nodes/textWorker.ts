@@ -14,6 +14,7 @@ export const textWorkerNode = async (state: typeof ReviewGraphState.State) => {
     const text = state.reviewPayload?.content || state.reviewPayload?.text || "";
     const rating = state.reviewPayload?.stars ?? state.reviewPayload?.rating;
     const productId = state.reviewPayload?.product_id || state.reviewPayload?.productId;
+    const originalStars = state.reviewPayload?.stars;
     
     // Fetch product details if available for relevance check
     let productContext = "";
@@ -105,12 +106,16 @@ export const textWorkerNode = async (state: typeof ReviewGraphState.State) => {
         : null;
 
     // 5. Update State
+    // Special case: if original stars = 0 (no rating provided), don't mark as mismatch 
+    // (it's an imputation case, not a rating-sentiment contradiction)
+    const finalIsMismatch = originalStars === 0 ? false : result.isMismatch;
+    
     return {
-        reasoningLogs: [`[Text Worker] Relevant: ${result.isProductRelevant}, Safe: ${result.isSafe}, Mismatch: ${result.isMismatch}, Support: ${result.requiresAfterSales}. Reason: ${result.reasoning}`],
+        reasoningLogs: [`[Text Worker] Relevant: ${result.isProductRelevant}, Safe: ${result.isSafe}, Mismatch: ${finalIsMismatch}, Support: ${result.requiresAfterSales}. Reason: ${result.reasoning}`],
         executedPrompts: [{ name: STANDARD_TEXT_WORKER_PROMPT.name }],
         isProductRelevant: result.isProductRelevant,
         isSafe: result.isSafe,
-        isMismatch: result.isMismatch,
+        isMismatch: finalIsMismatch,
         requiresAfterSales: result.requiresAfterSales,
         afterSalesDraft: draft,
         spanRecords: [spanRecord],

@@ -68,23 +68,42 @@ async function testE2EWithHttp() {
         const testCases = [
             {
                 id: "TEST_1",
-                name: "Off-Topic Review - Expected: REJECTED (not about ceramic product)",
+                name: "infer score Review - Expected: approved",
                 input: {
                     id: "69d5ce1f0f9051aa54da13a7",
-                    content: "my kids loves eating it",
-                    user_id: 1,
-                    product_id: 8,
+                    content: "not bad",
+                    user_id: 2,
+                    product_id: 2,
                     parent_id: "",
-                    stars: 5,
+                    stars: 3,
                     is_anonymous: false,
-                    pic_info: [],
+                    pic_info: ["1895fe774b3d02e4.jpg", "1895fe799bf29e7a.jpg"],
                     created_at: "2026-04-08T03:40:15.426Z",
                     likes: 0,
                     current_user_liked: false,
                     is_pinned: false,
                     status: "pending"
                 }
-            },
+            }, 
+            /* {
+                id: "TEST_2",
+                name: "normal Review - Expected: approved",
+                input: {
+                    "id":"69de542f40eccc567a900efe",
+                    "content":"ugly!!",
+                    "user_id":2,
+                    "product_id":1,
+                    "parent_id":"",
+                    "stars":2,
+                    "is_anonymous":true,
+                    "pic_info":[],
+                    "created_at":"2026-04-14T14:50:23.691Z",
+                    "likes":0,
+                    "current_user_liked":false,
+                    "is_pinned":false,
+                    "status":"processing"
+                }
+            }, */
             /* {
                 id: "TEST_2",
                 name: "Rating/Text Mismatch + After-Sales - Expected: HIDDEN + Draft",

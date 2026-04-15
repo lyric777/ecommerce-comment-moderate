@@ -8,12 +8,17 @@ import { STANDARD_VISION_WORKER_PROMPT } from "../../prompts/catalog.js";
 
 const llm = createLLMFromPromptConfig(STANDARD_VISION_WORKER_PROMPT.modelConfig);
 
+// S3 configuration (same as in your other project)
+const S3_CONFIG = {
+  BASE_URL: 'https://ceramicraft.s3.ap-southeast-1.amazonaws.com/',
+} as const;
+
 async function fetchImageToBase64(url: string): Promise<string> {
     try {
         console.log(`[Vision Worker Helper] Fetching image data from URL: ${url}`);
         const response = await axios.get(url, {
             responseType: "arraybuffer", // Important: get the raw binary data
-            timeout: 5000 // Set a reasonable timeout
+            timeout: 15000 // Set a reasonable timeout
         });
         
         // Convert the binary buffer to a base64 encoded string
@@ -31,7 +36,8 @@ async function fetchImageToBase64(url: string): Promise<string> {
 
 export const visionWorkerNode = async (state: typeof ReviewGraphState.State) => {
     console.log("Vision Worker: analyzing images...");
-    const { imageUrls } = state.reviewPayload;
+    // Support both imageUrls (test) and pic_info (real API) field names
+    const imageUrls = state.reviewPayload?.imageUrls || state.reviewPayload?.pic_info || [];
 
     if (!imageUrls || imageUrls.length === 0) {
         return {
@@ -64,24 +70,32 @@ export const visionWorkerNode = async (state: typeof ReviewGraphState.State) => 
     const spanRecords: SpanRecord[] = [];
 
     for (let i = 0; i < imageUrls.length; i++) {
-        const imageUrl = imageUrls[i]!; // Non-null assertion: we know it exists in the array
-        let finalImageData = imageUrl;
+        const imageInput = imageUrls[i]!; // Non-null assertion: we know it exists in the array
+        let finalImageUrl = imageInput;
 
-        // If it looks like a public HTTP/S URL, fetch it and convert to base64
-        if (imageUrl.startsWith("http://") || imageUrl.startsWith("https://")) {
+        // Convert different image input formats to a fetchable URL
+        if (imageInput.startsWith("data:image/")) {
+            // Already a data URI, can use directly
+            // No need to fetch
+        } else if (imageInput.startsWith("http://") || imageInput.startsWith("https://")) {
+            // Already a full URL, can use as-is
+            // Will fetch below
+        } else {
+            // Treat as S3 file name (e.g., "1895fe774b3d02e4.jpg")
+            // Convert to full S3 URL
+            finalImageUrl = S3_CONFIG.BASE_URL + imageInput;
+        }
+
+        // If it's a URL (not already a data URI), fetch and convert to base64
+        if (!imageInput.startsWith("data:image/")) {
             try {
-                finalImageData = await fetchImageToBase64(imageUrl);
+                finalImageUrl = await fetchImageToBase64(finalImageUrl);
             } catch (error: any) {
                 // If fetching fails, log and skip this image
                 imageLogs.push(`[Vision Worker] Image ${i + 1}: ERROR - ${error.message}`);
                 allImagesSafe = false;
                 continue;
             }
-        } else if (!imageUrl.startsWith("data:image/")) {
-            // Basic validation: if not a URL, must be a data URI already
-            imageLogs.push(`[Vision Worker] Image ${i + 1}: ERROR - Invalid image input format`);
-            allImagesSafe = false;
-            continue;
         }
 
         // 4. Constructing a Multi-modal Message for this image
@@ -96,7 +110,7 @@ export const visionWorkerNode = async (state: typeof ReviewGraphState.State) => 
                     {
                         type: "image_url",
                         image_url: {
-                            url: finalImageData 
+                            url: finalImageUrl 
                         }
                     }
                 ]

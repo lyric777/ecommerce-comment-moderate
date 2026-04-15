@@ -40,5 +40,6 @@ export {
     getProductHttp,
     listReviewsByStatusHttp,
     updateReviewStatusHttp,
-    getUserReviewsHttp
+    getUserReviewsHttp,
+    listReviewsByUserIdHttp
 } from "./tools-http.js";
