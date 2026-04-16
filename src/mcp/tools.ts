@@ -49,20 +49,23 @@ export async function listReviewsByStatus(
  * @param isMismatch - Whether review has rating/text mismatch
  * @param isHarmful - Whether review contains harmful content
  * @param autoFlag - Auto-flagging reason if any
+ * @param stars - Inferred/imputed rating (1-5 range, optional)
  */
 export async function updateReviewStatus(
     reviewId: string,
     status: "pending" | "approved" | "rejected",
     isMismatch?: boolean,
     isHarmful?: boolean,
-    autoFlag?: string
+    autoFlag?: string,
+    stars?: number
 ): Promise<any> {
     return callRemoteTool("update_review_status", {
         review_id: reviewId,
         status,
         ...(isMismatch !== undefined && { is_mismatch: isMismatch }),
         ...(isHarmful !== undefined && { is_harmful: isHarmful }),
-        ...(autoFlag && { auto_flag: autoFlag })
+        ...(autoFlag && { auto_flag: autoFlag }),
+        ...(stars !== undefined && { stars })
     });
 }
 

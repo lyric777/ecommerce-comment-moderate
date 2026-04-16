@@ -1,8 +1,8 @@
 /**
  * MLflow REST API client for logging comment moderation runs, traces, and prompts.
+ * (Migrated to native fetch to bypass VPN TUN network resets)
  */
 
-import axios from "axios";
 import crypto from "crypto";
 import "dotenv/config";
 import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
@@ -35,21 +35,26 @@ async function resolveExperimentId(): Promise<string> {
   if (cachedExperimentId) return cachedExperimentId;
 
   try {
-    const res = await axios.get(
-      `${MLFLOW_BASE}/api/2.0/mlflow/experiments/get-by-name`,
-      { params: { experiment_name: EXPERIMENT_NAME } }
-    );
-    cachedExperimentId = res.data.experiment.experiment_id as string;
-  } catch (err: any) {
-    if (err.response?.status === 404) {
-      const res = await axios.post(
-        `${MLFLOW_BASE}/api/2.0/mlflow/experiments/create`,
-        { name: EXPERIMENT_NAME }
-      );
-      cachedExperimentId = res.data.experiment_id as string;
+    const query = new URLSearchParams({ experiment_name: EXPERIMENT_NAME }).toString();
+    const res = await fetch(`${MLFLOW_BASE}/api/2.0/mlflow/experiments/get-by-name?${query}`);
+    
+    if (res.ok) {
+      const data = await res.json();
+      cachedExperimentId = data.experiment.experiment_id as string;
+    } else if (res.status === 404) {
+      const createRes = await fetch(`${MLFLOW_BASE}/api/2.0/mlflow/experiments/create`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: EXPERIMENT_NAME }),
+      });
+      if (!createRes.ok) throw new Error(`Failed to create experiment: ${createRes.status}`);
+      const createData = await createRes.json();
+      cachedExperimentId = createData.experiment_id as string;
     } else {
-      throw err;
+      throw new Error(`HTTP Error: ${res.status}`);
     }
+  } catch (err: any) {
+    throw err;
   }
 
   return cachedExperimentId!;
@@ -82,31 +87,38 @@ export async function logModerationRun(data: ModerationRunData): Promise<string 
     const experimentId = await resolveExperimentId();
     const startTime = Date.now();
 
-    const runRes = await axios.post(`${MLFLOW_BASE}/api/2.0/mlflow/runs/create`, {
-      experiment_id: experimentId,
-      run_name: data.reviewId ? `review-${data.reviewId}` : `review-${startTime}`,
-      start_time: startTime,
+    const runRes = await fetch(`${MLFLOW_BASE}/api/2.0/mlflow/runs/create`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        experiment_id: experimentId,
+        run_name: data.reviewId ? `review-${data.reviewId}` : `review-${startTime}`,
+        start_time: startTime,
+      }),
     });
+    if (!runRes.ok) throw new Error(`Run create failed: ${runRes.status}`);
+    const runData = await runRes.json();
+    const runId: string = runData.run.info.run_id;
 
-    const runId: string = runRes.data.run.info.run_id;
-
-    await axios.post(`${MLFLOW_BASE}/api/2.0/mlflow/runs/log-batch`, {
-      run_id: runId,
-      params: buildRunParams(data),
-      metrics: buildRunMetrics(data, startTime),
-      tags: buildRunTags(data),
+    await fetch(`${MLFLOW_BASE}/api/2.0/mlflow/runs/log-batch`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        run_id: runId,
+        params: buildRunParams(data),
+        metrics: buildRunMetrics(data, startTime),
+        tags: buildRunTags(data),
+      }),
     });
 
     if (data.reasoningLogs && data.reasoningLogs.length > 0) {
       try {
-        await axios.put(
-          `${MLFLOW_BASE}/api/2.0/mlflow-artifacts/artifacts/reasoning_logs.txt`,
-          data.reasoningLogs.join("\n"),
-          {
-            params: { run_id: runId },
-            headers: { "Content-Type": "text/plain" },
-          }
-        );
+        const query = new URLSearchParams({ run_id: runId }).toString();
+        await fetch(`${MLFLOW_BASE}/api/2.0/mlflow-artifacts/artifacts/reasoning_logs.txt?${query}`, {
+          method: "PUT",
+          headers: { "Content-Type": "text/plain" },
+          body: data.reasoningLogs.join("\n"),
+        });
       } catch {
         // Best-effort only.
       }
@@ -116,10 +128,14 @@ export async function logModerationRun(data: ModerationRunData): Promise<string 
       await associatePromptsWithRun(runId, data.linkedPrompts);
     }
 
-    await axios.post(`${MLFLOW_BASE}/api/2.0/mlflow/runs/update`, {
-      run_id: runId,
-      status: "FINISHED",
-      end_time: Date.now(),
+    await fetch(`${MLFLOW_BASE}/api/2.0/mlflow/runs/update`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        run_id: runId,
+        status: "FINISHED",
+        end_time: Date.now(),
+      }),
     });
 
     console.log(`[MLflow] Run logged successfully (run_id=${runId})`);
@@ -312,23 +328,27 @@ export async function logModerationTrace(data: ModerationTraceData): Promise<voi
 
     const executionDuration = `${(executionTime / 1000).toFixed(3)}s`;
 
-    await axios.post(`${MLFLOW_BASE}/api/3.0/mlflow/traces`, {
-      trace: {
-        trace_info: {
-          trace_id: traceId,
-          trace_location: {
-            type: "MLFLOW_EXPERIMENT",
-            mlflow_experiment: { experiment_id: experimentId },
+    await fetch(`${MLFLOW_BASE}/api/3.0/mlflow/traces`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        trace: {
+          trace_info: {
+            trace_id: traceId,
+            trace_location: {
+              type: "MLFLOW_EXPERIMENT",
+              mlflow_experiment: { experiment_id: experimentId },
+            },
+            request_time: new Date(startTime).toISOString(),
+            execution_duration: executionDuration,
+            state: "OK",
+            trace_metadata: traceMetadata,
+            tags: traceTags,
+            request_preview: request.substring(0, 1000),
+            response_preview: response.substring(0, 1000),
           },
-          request_time: new Date(startTime).toISOString(),
-          execution_duration: executionDuration,
-          state: "OK",
-          trace_metadata: traceMetadata,
-          tags: traceTags,
-          request_preview: request.substring(0, 1000),
-          response_preview: response.substring(0, 1000),
         },
-      },
+      }),
     });
 
     if (data.linkedPrompts && data.linkedPrompts.length > 0) {
@@ -342,7 +362,7 @@ export async function logModerationTrace(data: ModerationTraceData): Promise<voi
         llm_model: models[0] || undefined,
       });
     } catch (e: any) {
-      console.warn("[MLflow] Failed to upload trace spans:", e.response?.status, e.message);
+      console.warn("[MLflow] Failed to upload trace spans:", e.message);
     }
 
     console.log(`[MLflow] Trace logged (trace_id=${traceId})`);
@@ -371,7 +391,6 @@ async function uploadTraceSpans(
   const startTimeNs = startTimeMs * 1_000_000;
   const endTimeNs = (startTimeMs + Math.max(0, executionTimeMs)) * 1_000_000;
 
-  // Root span — CHAIN type, encompasses the full workflow
   const rootSpanId = generateHexId(16);
   const rootAttributes: Record<string, string> = {
     "mlflow.spanType": "CHAIN",
@@ -396,7 +415,6 @@ async function uploadTraceSpans(
     },
   ];
 
-  // Child spans — one per LLM call recorded by graph nodes
   for (const rec of childSpanRecords) {
     const childSpanId = generateHexId(16);
     const childAttrs: Record<string, string> = {
@@ -439,12 +457,16 @@ async function finalizeTrace(traceId: string, startTimeMs: number, executionTime
   const endTimestampMs = Math.max(Date.now(), startTimeMs + Math.max(0, executionTimeMs));
 
   try {
-    await axios.patch(`${MLFLOW_BASE}/api/2.0/mlflow/traces/${traceId}`, {
-      timestamp_ms: endTimestampMs,
-      status: "OK",
+    await fetch(`${MLFLOW_BASE}/api/2.0/mlflow/traces/${traceId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        timestamp_ms: endTimestampMs,
+        status: "OK",
+      }),
     });
   } catch {
-    // Best-effort only: tracing still exists even if finalization fails.
+    // Best-effort only
   }
 }
 
@@ -492,31 +514,44 @@ async function ensurePromptRegistered(prompt: PromptDefinition, experimentId: st
 
   if (!existing) {
     try {
-      await axios.post(`${MLFLOW_BASE}/api/2.0/mlflow/registered-models/create`, {
-        name: prompt.name,
-        description: prompt.description,
-        tags: [
-          { key: "mlflow.prompt.is_prompt", value: "true" },
-          { key: PROMPT_EXPERIMENT_IDS_TAG_KEY, value: mergedExperimentTag },
-          { key: "project", value: "comment-moderate" },
-        ],
+      const res = await fetch(`${MLFLOW_BASE}/api/2.0/mlflow/registered-models/create`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: prompt.name,
+          description: prompt.description,
+          tags: [
+            { key: "mlflow.prompt.is_prompt", value: "true" },
+            { key: PROMPT_EXPERIMENT_IDS_TAG_KEY, value: mergedExperimentTag },
+            { key: "project", value: "comment-moderate" },
+          ],
+        }),
       });
-      console.log(`[MLflow] Prompt registered: ${prompt.name}`);
-      return;
-    } catch (error: any) {
-      const status = error.response?.status ?? 0;
-      const message = String(error.response?.data?.message ?? "");
-      const alreadyExists = status === 409 || (status === 400 && message.toLowerCase().includes("already"));
-      if (!alreadyExists) {
-        throw error;
+
+      if (!res.ok) {
+        const status = res.status;
+        const text = await res.text();
+        const alreadyExists = status === 409 || (status === 400 && text.toLowerCase().includes("already"));
+        if (!alreadyExists) {
+          throw new Error(`HTTP Error ${status}: ${text}`);
+        }
+      } else {
+        console.log(`[MLflow] Prompt registered: ${prompt.name}`);
+        return;
       }
+    } catch (error: any) {
+      throw error;
     }
   }
 
-  await axios.post(`${MLFLOW_BASE}/api/2.0/mlflow/registered-models/set-tag`, {
-    name: prompt.name,
-    key: PROMPT_EXPERIMENT_IDS_TAG_KEY,
-    value: mergedExperimentTag,
+  await fetch(`${MLFLOW_BASE}/api/2.0/mlflow/registered-models/set-tag`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: prompt.name,
+      key: PROMPT_EXPERIMENT_IDS_TAG_KEY,
+      value: mergedExperimentTag,
+    }),
   });
 }
 
@@ -528,25 +563,28 @@ async function ensurePromptVersion(prompt: PromptDefinition): Promise<void> {
     return;
   }
 
-  await axios.post(`${MLFLOW_BASE}/api/2.0/mlflow/model-versions/create`, {
-    name: prompt.name,
-    description: prompt.commitMessage,
-    source: "dummy-source",
-    tags: desiredTags,
+  await fetch(`${MLFLOW_BASE}/api/2.0/mlflow/model-versions/create`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      name: prompt.name,
+      description: prompt.commitMessage,
+      source: "dummy-source",
+      tags: desiredTags,
+    }),
   });
   console.log(`[MLflow] Prompt version created: ${prompt.name}`);
 }
 
 async function getRegisteredPrompt(name: string): Promise<any | null> {
   try {
-    const res = await axios.get(`${MLFLOW_BASE}/api/2.0/mlflow/registered-models/get`, {
-      params: { name },
-    });
-    return res.data?.registered_model ?? null;
+    const query = new URLSearchParams({ name }).toString();
+    const res = await fetch(`${MLFLOW_BASE}/api/2.0/mlflow/registered-models/get?${query}`);
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`HTTP Error ${res.status}`);
+    const data = await res.json();
+    return data?.registered_model ?? null;
   } catch (error: any) {
-    if (error.response?.status === 404) {
-      return null;
-    }
     throw error;
   }
 }
@@ -621,43 +659,56 @@ function mergeExperimentIds(existingValue: string | undefined, experimentId: str
 }
 
 async function associatePromptsWithRun(runId: string, promptRefs: PromptVersionRef[]): Promise<void> {
-  await axios.post(`${MLFLOW_BASE}/api/2.0/mlflow/runs/set-tag`, {
-    run_id: runId,
-    key: LINKED_PROMPTS_TAG_KEY,
-    value: JSON.stringify(promptRefs),
+  await fetch(`${MLFLOW_BASE}/api/2.0/mlflow/runs/set-tag`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      run_id: runId,
+      key: LINKED_PROMPTS_TAG_KEY,
+      value: JSON.stringify(promptRefs),
+    }),
   });
 
   for (const promptRef of promptRefs) {
     const current = await getModelVersionTag(promptRef.name, promptRef.version, PROMPT_ASSOCIATED_RUN_IDS_TAG_KEY);
-    await axios.post(`${MLFLOW_BASE}/api/2.0/mlflow/model-versions/set-tag`, {
-      name: promptRef.name,
-      version: promptRef.version,
-      key: PROMPT_ASSOCIATED_RUN_IDS_TAG_KEY,
-      value: mergeCsvValues(current, runId),
+    await fetch(`${MLFLOW_BASE}/api/2.0/mlflow/model-versions/set-tag`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        name: promptRef.name,
+        version: promptRef.version,
+        key: PROMPT_ASSOCIATED_RUN_IDS_TAG_KEY,
+        value: mergeCsvValues(current, runId),
+      }),
     });
   }
 }
 
 async function linkPromptsToTrace(traceId: string, promptRefs: PromptVersionRef[]): Promise<void> {
   try {
-    await axios.post(`${MLFLOW_BASE}/api/2.0/mlflow/traces/link-prompts`, {
-      trace_id: traceId,
-      prompt_versions: promptRefs.map((promptRef) => ({
-        name: promptRef.name,
-        version: promptRef.version,
-      })),
+    await fetch(`${MLFLOW_BASE}/api/2.0/mlflow/traces/link-prompts`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        trace_id: traceId,
+        prompt_versions: promptRefs.map((promptRef) => ({
+          name: promptRef.name,
+          version: promptRef.version,
+        })),
+      }),
     });
   } catch {
-    // Best-effort only. The trace tag already contains linked prompts.
+    // Best-effort only
   }
 }
 
 async function getModelVersionTag(name: string, version: string, key: string): Promise<string | undefined> {
   try {
-    const res = await axios.get(`${MLFLOW_BASE}/api/2.0/mlflow/model-versions/get`, {
-      params: { name, version },
-    });
-    return getTagValue(res.data?.model_version?.tags, key);
+    const query = new URLSearchParams({ name, version }).toString();
+    const res = await fetch(`${MLFLOW_BASE}/api/2.0/mlflow/model-versions/get?${query}`);
+    if (!res.ok) return undefined;
+    const data = await res.json();
+    return getTagValue(data?.model_version?.tags, key);
   } catch {
     return undefined;
   }

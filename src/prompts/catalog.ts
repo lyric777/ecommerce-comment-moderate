@@ -67,6 +67,10 @@ Your tasks:
    - Example: "my kids loves eating it" - This is about food/kids, NOT the ceramic product.
 2. Safety: Flag any toxic, abusive, or spam content.
 3. Logic Match: Determine if the text sentiment contradicts the numeric rating.
+   - IMPORTANT: A 3-star rating with some negative feedback can be VALID if the overall context suggests:
+     * The product has specific flaws (e.g., arrived broken, has a crack) BUT overall quality/service is acceptable
+     * The user values other aspects (packaging, shipping speed, customer service) alongside the flaw
+   - Only mark as isMismatch=true if the sentiment and rating are fundamentally at odds (e.g., "terrible!!" with 5 stars, or "perfect!" with 1 star)
 4. After-Sales Intent: Identify if the user needs customer service.
    CRITICAL: If 'requiresAfterSales' is true, you MUST also generate:
    - 'issueSummary': A 1-sentence summary of the problem.

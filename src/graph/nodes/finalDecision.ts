@@ -8,6 +8,7 @@ import {
     resolvePromptVersionRefs,
 } from "../../utils/mlflowClient.js";
 import { globalTokenTracker } from "../../utils/llmFactory.js";
+import { sendModerationNotification } from "../../utils/emailService.js";
 
 export const finalDecisionNode = async (state: typeof ReviewGraphState.State) => {
     console.log("Final Decision: Analyzing all evidence and making final verdict...");
@@ -136,7 +137,8 @@ export const finalDecisionNode = async (state: typeof ReviewGraphState.State) =>
     
     // Add context for hidden reviews
     if (finalStatus === "hidden") {
-        logs.push(`[Final Decision] Reason: Rating (${reviewPayload?.rating}) does not match sentiment`);
+        const displayRating = reviewPayload?.stars ?? reviewPayload?.rating;
+        logs.push(`[Final Decision] Reason: Rating (${displayRating}) does not match sentiment`);
     }
     
     // Add after-sales context if present
@@ -210,6 +212,45 @@ export const finalDecisionNode = async (state: typeof ReviewGraphState.State) =>
         totalTokens:   globalTokenTracker.totalTokens,
         spanRecords:   spanRecords ?? [],
     });
+
+    // 10. Send moderation notification to admin
+    // Only notify admin if: review is REJECTED (dangerous user) OR has after-sales (needs action)
+    const shouldNotifyAdmin = finalStatus === "rejected" || requiresAfterSales;
+    const adminEmail = process.env.EMAIL_RECEIVER;
+    
+    if (adminEmail && shouldNotifyAdmin) {
+        try {
+            console.log(`[Final Decision] Sending moderation notification to admin (${adminEmail})...`);
+            const reviewContent = reviewPayload?.content ?? reviewPayload?.text ?? "(no content)";
+            const userId = reviewPayload?.user_id;
+            
+            // Add risk warning for rejected reviews
+            const isRejected = finalStatus === "rejected";
+            
+            const emailResult = await sendModerationNotification(
+                adminEmail,
+                reviewId ?? 'UNKNOWN',
+                userId,
+                reviewContent,
+                finalStatus,
+                finalAutoFlag ?? null,
+                requiresAfterSales ? afterSalesDraft : null,
+                isRejected  // Pass flag to highlight dangerous user
+            );
+            
+            if (emailResult.success) {
+                logs.push(`[Final Decision] ✅ Moderation notification sent to admin`);
+            } else {
+                logs.push(`[Final Decision] ⚠️ Failed to send admin notification: ${emailResult.error}`);
+            }
+        } catch (error: any) {
+            logs.push(`[Final Decision] ⚠️ Exception while sending admin email: ${error.message}`);
+        }
+    } else if (!shouldNotifyAdmin) {
+        logs.push(`[Final Decision] ℹ️  Skipped admin notification: review approved, no after-sales`);
+    } else {
+        logs.push(`[Final Decision] ⚠️ No admin email configured (EMAIL_RECEIVER), skipping notification`);
+    }
 
     return {
         finalStatus,
