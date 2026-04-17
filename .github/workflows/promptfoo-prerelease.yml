@@ -31,6 +31,7 @@ jobs:
       LLM_VISION_MODEL: ${{ secrets.LLM_VISION_MODEL }}
       MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_TRACKING_URI }}
       RUN_ENV: test
+      RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -43,11 +44,6 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
-      
-      - name: 🕵️‍♂️ 强行暴露真实报错 (Raw Script Test)
-        # 绕过 promptfoo，直接给脚本传一个假数据裸跑
-        run: node --import tsx ./scripts/promptfoo/prereleaseRunner.ts prerelease-review-moderation-gate '{"vars":{"reviewPayload":{"content":"die die die","stars":5}}}'
-        continue-on-error: true # 关键：让它即使报错，也不要中断 workflow，接着往下走
 
       - name: Run prerelease promptfoo gate
         run: npm run eval:promptfoo:prerelease
