@@ -14,7 +14,6 @@ server.registerTool(
   {
     title: "Moderate review",
     description: "Orchestrates a multi-agent workflow to moderate e-commerce reviews.",
-    // 使用 Zod 的 object schema 作为 inputSchema（推荐）
     // Use a Zod object schema for input (recommended)
     inputSchema: z.object({
       text: z.string().describe("Review text"),
